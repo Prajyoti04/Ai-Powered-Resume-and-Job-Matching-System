@@ -1,0 +1,18 @@
+# Core dependencies
+streamlit
+mysql-connector-python
+python-dotenv
+
+# Data and visualization
+pandas
+numpy
+matplotlib
+plotly
+
+# PDF handling
+pdf2image
+
+# AI / Gemini integration
+google-generativeai
+
+
