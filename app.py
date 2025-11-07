@@ -42,37 +42,19 @@ def get_gemini_response(input_text, pdf_content, prompt):
 
 # ------------------ Streamlit UI ------------------ #
 st.set_page_config(page_title="🤖 AI Resume & Job Matching", layout="wide")
-st.markdown(
-    """
-    <style>
-    body {
-        background: linear-gradient(to right, #a18cd1, #fbc2eb);
-        font-family: 'Arial', sans-serif;
-    }
-    .stFileUpload, .stTextArea, .stButton {
-        border-radius: 12px;
-        padding: 10px;
-        margin-bottom: 20px;
-    }
-    .stTextArea textarea {
-        background-color: rgba(255,255,255,0.9);
-    }
-    .stFileUpload div[data-baseweb] {
-        background-color: rgba(255,255,255,0.9);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 st.title("🤖 AI-Powered Resume & Job Matching System")
-st.subheader("Upload your resume and job description to get ATS-style insights!")
+st.write("Upload your resume and job description to get ATS-style insights!")
 
-# Layout
+# Layout: Job description & Resume upload
 col1, col2 = st.columns(2)
 
 with col1:
-    input_text = st.text_area("📝 Job Description", height=250)
+    input_text = st.text_area(
+        "📝 Job Description", 
+        height=250,
+        placeholder="Paste the job description here..."
+    )
 
 with col2:
     uploaded_files = st.file_uploader(
@@ -84,7 +66,7 @@ with col2:
 if uploaded_files:
     st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully", icon="✅")
 
-# Prompts
+# ------------------ Prompts ------------------ #
 input_prompt1 = """
 You are an experienced Technical Human Resource Manager, your task is to review the provided resume against the job description. 
 Please share your professional evaluation on whether the candidate's profile aligns with the role. 
@@ -97,9 +79,12 @@ your task is to evaluate the resume against the provided job description. Give m
 the job description. First the output should come as percentage and then keywords missing and last final thoughts.
 """
 
-# Buttons
+# ------------------ Buttons ------------------ #
+st.write("")  # Spacer
 submit1 = st.button("📄 Tell Me About the Resume")
+st.write("")  # Spacer
 submit3 = st.button("📊 Percentage Match")
+st.write("")  # Spacer
 
 # ------------------ Button Actions ------------------ #
 if submit1:
@@ -109,6 +94,7 @@ if submit1:
             response = get_gemini_response(input_text, pdf_content, input_prompt1)
             st.subheader(f"Resume: {uploaded_file.name}")
             st.write(response)
+            st.write("---")  # Separator
     else:
         st.warning("Please upload at least one resume.")
 
@@ -119,5 +105,6 @@ elif submit3:
             response = get_gemini_response(input_text, pdf_content, input_prompt3)
             st.subheader(f"Resume: {uploaded_file.name}")
             st.write(response)
+            st.write("---")  # Separator
     else:
         st.warning("Please upload at least one resume.")
