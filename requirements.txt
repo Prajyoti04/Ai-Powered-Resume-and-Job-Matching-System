@@ -1,4 +1,9 @@
 streamlit==1.51.0
 python-dotenv
+mysql-connector-python
+matplotlib
+plotly
 pdf2image
 google-generativeai
+Pillow
+numpy
