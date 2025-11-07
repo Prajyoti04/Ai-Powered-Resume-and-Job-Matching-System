@@ -1,158 +1,140 @@
 import streamlit as st
-import os
-import mysql.connector
-from dotenv import load_dotenv
-import matplotlib.pyplot as plt
-import plotly.express as px
-from pdf2image import convert_from_path
-from PIL import Image
-import numpy as np
-import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 import torch
-import pinecone
+import os
+from dotenv import load_dotenv
+import pdfplumber
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
-# ------------------------------------------------------------
-# 1️⃣ Setup & Initialization
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 🎯 Environment Setup
+# ---------------------------------------------------------------------
 load_dotenv()
+st.set_page_config(page_title="🤖 AI-Powered Resume & Job Match", layout="wide")
 
-# Safety device setting for PyTorch
-device = "cuda" if torch.cuda.is_available() else "cpu"
-st.write(f"✅ Using device: {device}")
-
-# Load model safely
+# ---------------------------------------------------------------------
+# 🎯 Safe Model Loading (Fix for Torch 3.13 / Streamlit Cloud)
+# ---------------------------------------------------------------------
 try:
-    model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+except NotImplementedError:
+    import logging
+    logging.warning("⚠️ Torch device conversion not supported. Loading model on CPU manually.")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 except Exception as e:
     st.error("❌ Error loading SentenceTransformer model.")
     st.write(e)
     st.stop()
 
-# Pinecone initialization
-pinecone_api = os.getenv("PINECONE_API_KEY")
-if pinecone_api:
-    pinecone.init(api_key=pinecone_api, environment="us-west1-gcp")
-else:
-    st.warning("⚠️ Pinecone API key not found in environment variables.")
-
-# Google Gemini (Generative AI)
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-# ------------------------------------------------------------
-# 2️⃣ MySQL Database Connection
-# ------------------------------------------------------------
-def get_db_connection():
-    try:
-        return mysql.connector.connect(
-            host="localhost",
-            user=os.getenv("MYSQL_USER", "root"),
-            password=os.getenv("MYSQL_PASSWORD", ""),
-            database=os.getenv("MYSQL_DATABASE", "resume_db"),
-        )
-    except Exception as e:
-        st.error("❌ Database connection failed.")
-        st.write(e)
-        return None
-
-# ------------------------------------------------------------
-# 3️⃣ Helper Functions
-# ------------------------------------------------------------
-def embed_text(text):
-    """Generate embeddings for a given text using SentenceTransformer."""
-    return model.encode(text).tolist()
-
+# ---------------------------------------------------------------------
+# 📄 Helper: Extract Text from Uploaded PDFs
+# ---------------------------------------------------------------------
 def extract_text_from_pdf(uploaded_file):
-    """Extract text from a PDF resume."""
+    text = ""
     try:
-        images = convert_from_path(uploaded_file)
-        text = ""
-        for img in images:
-            # For simplicity, no OCR integration here
-            text += " [Image converted from page]"
-        return text
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+    except Exception:
+        st.error("⚠️ Could not extract text from this PDF.")
+    return text
+
+# ---------------------------------------------------------------------
+# 🧠 Helper: Compute Similarity Between Resume and Job Description
+# ---------------------------------------------------------------------
+def calculate_similarity(resume_text, job_text):
+    if not resume_text.strip() or not job_text.strip():
+        return 0.0
+    try:
+        resume_emb = model.encode(resume_text, convert_to_tensor=True)
+        job_emb = model.encode(job_text, convert_to_tensor=True)
+        score = torch.nn.functional.cosine_similarity(resume_emb, job_emb, dim=0)
+        return float(score.item())
     except Exception as e:
-        st.error("Error reading PDF file.")
+        st.error("⚠️ Error calculating similarity:")
         st.write(e)
-        return ""
+        return 0.0
 
-def generate_summary(text):
-    """Generate a short professional summary using Gemini."""
-    try:
-        prompt = f"Summarize the following resume in 3-4 lines:\n{text}"
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"⚠️ Could not generate summary: {e}"
+# ---------------------------------------------------------------------
+# 🎨 Streamlit UI
+# ---------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+        .main-title {
+            font-size: 2.2em;
+            color: #9C27B0;
+            text-align: center;
+            font-weight: 700;
+            margin-bottom: 1em;
+        }
+        .section-header {
+            color: #E91E63;
+            font-weight: 600;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-size: 1.2em;
+        }
+        .stButton>button {
+            background-color: #9C27B0;
+            color: white;
+            font-weight: 600;
+            border-radius: 10px;
+            padding: 0.5em 1em;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# ------------------------------------------------------------
-# 4️⃣ Streamlit UI Layout
-# ------------------------------------------------------------
-st.set_page_config(page_title="AI Resume Matcher", layout="centered")
-st.title("🤖 AI-Powered Resume & Job Matching System")
+st.markdown('<div class="main-title">🤖 AI-Powered Resume & Job Matching System</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------
+# 📝 Job Description Input
+# ---------------------------------------------------------------------
+st.markdown('<div class="section-header">📝 Enter Job Description:</div>', unsafe_allow_html=True)
+job_description = st.text_area("Paste the job description here", height=180)
+
+# ---------------------------------------------------------------------
+# 📎 Upload Resume(s)
+# ---------------------------------------------------------------------
+st.markdown('<div class="section-header">📎 Upload Resume (PDF only)</div>', unsafe_allow_html=True)
+uploaded_resumes = st.file_uploader(
+    "Upload one or more resumes (PDF)",
+    type=["pdf"],
+    accept_multiple_files=True
+)
+
+# ---------------------------------------------------------------------
+# 🚀 Matching Logic
+# ---------------------------------------------------------------------
+if st.button("🔍 Match Resume(s)"):
+    if not job_description.strip():
+        st.warning("⚠️ Please enter a job description first.")
+    elif not uploaded_resumes:
+        st.warning("⚠️ Please upload at least one resume.")
+    else:
+        st.info("⏳ Analyzing... please wait.")
+        results = []
+
+        for resume_file in uploaded_resumes:
+            resume_text = extract_text_from_pdf(resume_file)
+            score = calculate_similarity(resume_text, job_description)
+            results.append((resume_file.name, round(score * 100, 2)))
+
+        st.success("✅ Analysis Complete!")
+
+        # Display results
+        for name, match in results:
+            st.markdown(f"**📄 {name}** — Match Score: **{match}%**")
+            st.progress(int(match))
+
+# ---------------------------------------------------------------------
+# 📢 Footer
+# ---------------------------------------------------------------------
 st.markdown("---")
-
-tab1, tab2, tab3 = st.tabs(["📄 Upload Resume", "📊 Job Matching", "📈 Insights"])
-
-# ------------------------------------------------------------
-# 5️⃣ Tab 1: Resume Upload & Summary
-# ------------------------------------------------------------
-with tab1:
-    st.subheader("Upload Your Resume")
-    uploaded_file = st.file_uploader("Select a resume (PDF format only)", type=["pdf"])
-
-    if uploaded_file:
-        with open("temp_resume.pdf", "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        st.success("✅ Resume uploaded successfully!")
-        resume_text = extract_text_from_pdf("temp_resume.pdf")
-
-        st.markdown("### 🧾 Extracted Text Preview")
-        st.text_area("Resume Text", resume_text[:1500] + "..." if len(resume_text) > 1500 else resume_text, height=200)
-
-        if st.button("✨ Generate Summary", use_container_width=True):
-            summary = generate_summary(resume_text)
-            st.markdown("### 🧠 AI Summary")
-            st.info(summary)
-
-# ------------------------------------------------------------
-# 6️⃣ Tab 2: Job Matching Section
-# ------------------------------------------------------------
-with tab2:
-    st.subheader("Find Matching Jobs")
-    job_desc = st.text_area("Enter Job Description", placeholder="Paste the job description here...")
-    
-    if st.button("🔍 Match Resume", use_container_width=True):
-        if uploaded_file and job_desc:
-            resume_embed = embed_text(resume_text)
-            job_embed = embed_text(job_desc)
-            similarity = np.dot(resume_embed, job_embed) / (np.linalg.norm(resume_embed) * np.linalg.norm(job_embed))
-            st.metric("Match Score (%)", f"{round(similarity * 100, 2)}")
-        else:
-            st.warning("⚠️ Please upload a resume and enter a job description.")
-
-# ------------------------------------------------------------
-# 7️⃣ Tab 3: Insights / Analytics
-# ------------------------------------------------------------
-with tab3:
-    st.subheader("📊 Analytics Dashboard")
-
-    data = {
-        "Skills": ["Python", "ML", "SQL", "Communication", "Data Analysis"],
-        "Proficiency": [80, 75, 65, 90, 70]
-    }
-
-    fig = px.bar(data, x="Skills", y="Proficiency", title="Skill Proficiency Overview", color="Skills")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("### 📈 AI-Powered Insights")
-    st.write("Use this dashboard to understand your strengths and skill alignment with job descriptions.")
-
-# ------------------------------------------------------------
-# 8️⃣ Footer
-# ------------------------------------------------------------
-st.markdown("---")
-st.caption("🧠 Built with Streamlit, SentenceTransformers, Pinecone & Gemini AI")
-
+st.markdown(
+    "<p style='text-align:center; color:gray;'>Built with 💜 using Streamlit & SentenceTransformers</p>",
+    unsafe_allow_html=True
+)
