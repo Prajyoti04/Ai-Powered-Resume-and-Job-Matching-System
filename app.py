@@ -4,48 +4,47 @@ import io
 import base64
 from dotenv import load_dotenv
 import streamlit as st
-from PIL import Image
 import pdf2image
 import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
 
-# Configure Google Gemini API
+# Configure Google Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Streamlit page config
+# Streamlit config
 st.set_page_config(page_title="🤖 AI-Powered Resume & Job Matching System", layout="wide")
 
 # Purple-pink theme
 st.markdown("""
-    <style>
-    .main {
-        background: linear-gradient(120deg, #d5a6ff, #ffb6c1);
-        border-radius: 15px;
-        padding: 20px;
-    }
-    textarea, .stFileUploader {
-        background: rgba(255,255,255,0.8);
-        border-radius: 10px;
-        padding: 10px;
-    }
-    .stButton>button {
-        background: #9b59b6;
-        color: white;
-        font-weight: bold;
-        border-radius: 10px;
-        padding: 0.5em 1em;
-        margin-top: 10px;
-    }
-    </style>
+<style>
+.main {
+    background: linear-gradient(120deg, #d5a6ff, #ffb6c1);
+    border-radius: 15px;
+    padding: 20px;
+}
+textarea, .stFileUploader {
+    background: rgba(255,255,255,0.8);
+    border-radius: 10px;
+    padding: 10px;
+}
+.stButton>button {
+    background: #9b59b6;
+    color: white;
+    font-weight: bold;
+    border-radius: 10px;
+    padding: 0.5em 1em;
+    margin-top: 10px;
+}
+</style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main">', unsafe_allow_html=True)
 st.title("🤖 AI-Powered Resume & Job Matching System")
-st.subheader("Upload your resume(s) and job description to get an ATS-style evaluation!")
+st.subheader("Upload your resume(s) and job description to get ATS-style evaluation!")
 
-# Columns for inputs
+# Columns for input
 col1, col2 = st.columns(2, gap="large")
 
 with col1:
@@ -56,16 +55,16 @@ with col2:
 if uploaded_files:
     st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully ✅")
 
+# Convert PDF to base64 for Gemini
 def input_pdf_setup(uploaded_file):
     images = pdf2image.convert_from_bytes(uploaded_file.read())
     first_page = images[0]
     img_byte_arr = io.BytesIO()
     first_page.save(img_byte_arr, format='JPEG')
     img_byte_arr = img_byte_arr.getvalue()
-    return [
-        {"mime_type": "image/jpeg", "data": base64.b64encode(img_byte_arr).decode()}
-    ]
+    return [{"mime_type": "image/jpeg", "data": base64.b64encode(img_byte_arr).decode()}]
 
+# Get response from Gemini
 def get_gemini_response(input_text, pdf_content, prompt):
     model_gen = genai.GenerativeModel('gemini-1.5-flash')
     response = model_gen.generate_content([input_text, pdf_content[0], prompt])
@@ -76,16 +75,16 @@ submit1 = st.button("📄 Tell Me About the Resume")
 submit2 = st.button("📊 Percentage Match")
 
 input_prompt1 = """
-You are an experienced Technical Human Resource Manager, your task is to review the provided resume against the job description. 
-Please share your professional evaluation on whether the candidate's profile aligns with the role. 
-Highlight the strengths and weaknesses of the applicant in relation to the specified job requirements.
+You are an experienced Technical Human Resource Manager. 
+Review the resume against the job description. Highlight strengths and weaknesses in relation to the role.
 """
 
 input_prompt2 = """
-You are a skilled ATS (Applicant Tracking System) scanner. Evaluate the resume against the job description. 
-Provide percentage match first, then keywords missing, then final thoughts.
+You are a skilled ATS (Applicant Tracking System) scanner. 
+Evaluate the resume against the job description. Provide percentage match first, then missing keywords, then final thoughts.
 """
 
+# Responses
 if submit1:
     if uploaded_files:
         for uploaded_file in uploaded_files:
