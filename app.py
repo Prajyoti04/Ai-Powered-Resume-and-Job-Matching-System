@@ -1,107 +1,123 @@
+from dotenv import load_dotenv
+import streamlit as st
 import os
 import io
 import base64
-from dotenv import load_dotenv
-import streamlit as st
+from PIL import Image
 import pdf2image
 import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
 
-# Configure Google Gemini
+# Configure Google Gemini API
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Streamlit config
-st.set_page_config(page_title="🤖 AI-Powered Resume & Job Matching System", layout="wide")
+# ------------------ Helper Functions ------------------ #
+def input_pdf_setup(uploaded_file):
+    """Convert uploaded PDF to base64 images for processing"""
+    if uploaded_file is not None:
+        images = pdf2image.convert_from_bytes(uploaded_file.read())
+        first_page = images[0]
 
-# Purple-pink theme
-st.markdown("""
-<style>
-.main {
-    background: linear-gradient(120deg, #d5a6ff, #ffb6c1);
-    border-radius: 15px;
-    padding: 20px;
-}
-textarea, .stFileUploader {
-    background: rgba(255,255,255,0.8);
-    border-radius: 10px;
-    padding: 10px;
-}
-.stButton>button {
-    background: #9b59b6;
-    color: white;
-    font-weight: bold;
-    border-radius: 10px;
-    padding: 0.5em 1em;
-    margin-top: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
+        img_byte_arr = io.BytesIO()
+        first_page.save(img_byte_arr, format='JPEG')
+        img_byte_arr = img_byte_arr.getvalue()
 
-st.markdown('<div class="main">', unsafe_allow_html=True)
+        pdf_parts = [
+            {
+                "mime_type": "image/jpeg",
+                "data": base64.b64encode(img_byte_arr).decode()
+            }
+        ]
+        return pdf_parts
+    else:
+        raise FileNotFoundError("No file uploaded or invalid PDF file.")
+
+def get_gemini_response(input_text, pdf_content, prompt):
+    """Call Google Gemini model to generate response"""
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content([input_text, pdf_content[0], prompt])
+    return response.text
+
+# ------------------ Streamlit UI ------------------ #
+st.set_page_config(page_title="🤖 AI Resume & Job Matching", layout="wide")
+st.markdown(
+    """
+    <style>
+    body {
+        background: linear-gradient(to right, #a18cd1, #fbc2eb);
+        font-family: 'Arial', sans-serif;
+    }
+    .stFileUpload, .stTextArea, .stButton {
+        border-radius: 12px;
+        padding: 10px;
+        margin-bottom: 20px;
+    }
+    .stTextArea textarea {
+        background-color: rgba(255,255,255,0.9);
+    }
+    .stFileUpload div[data-baseweb] {
+        background-color: rgba(255,255,255,0.9);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 st.title("🤖 AI-Powered Resume & Job Matching System")
-st.subheader("Upload your resume(s) and job description to get ATS-style evaluation!")
+st.subheader("Upload your resume and job description to get ATS-style insights!")
 
-# Columns for input
-col1, col2 = st.columns(2, gap="large")
+# Layout
+col1, col2 = st.columns(2)
 
 with col1:
-    input_text = st.text_area("📝 Job Description", height=300)
+    input_text = st.text_area("📝 Job Description", height=250)
+
 with col2:
-    uploaded_files = st.file_uploader("📎 Upload Resume(s) (PDF only)", type=["pdf"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "📎 Upload Resume(s) (PDF only)", 
+        type=["pdf"], 
+        accept_multiple_files=True
+    )
 
 if uploaded_files:
-    st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully ✅")
+    st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully", icon="✅")
 
-# Convert PDF to base64 for Gemini
-def input_pdf_setup(uploaded_file):
-    images = pdf2image.convert_from_bytes(uploaded_file.read())
-    first_page = images[0]
-    img_byte_arr = io.BytesIO()
-    first_page.save(img_byte_arr, format='JPEG')
-    img_byte_arr = img_byte_arr.getvalue()
-    return [{"mime_type": "image/jpeg", "data": base64.b64encode(img_byte_arr).decode()}]
+# Prompts
+input_prompt1 = """
+You are an experienced Technical Human Resource Manager, your task is to review the provided resume against the job description. 
+Please share your professional evaluation on whether the candidate's profile aligns with the role. 
+Highlight the strengths and weaknesses of the applicant in relation to the specified job requirements.
+"""
 
-# Get response from Gemini
-def get_gemini_response(input_text, pdf_content, prompt):
-    model_gen = genai.GenerativeModel('gemini-1.5-flash')
-    response = model_gen.generate_content([input_text, pdf_content[0], prompt])
-    return response.text
+input_prompt3 = """
+You are a skilled ATS (Applicant Tracking System) scanner with a deep understanding of data science and ATS functionality, 
+your task is to evaluate the resume against the provided job description. Give me the percentage of match if the resume matches
+the job description. First the output should come as percentage and then keywords missing and last final thoughts.
+"""
 
 # Buttons
 submit1 = st.button("📄 Tell Me About the Resume")
-submit2 = st.button("📊 Percentage Match")
+submit3 = st.button("📊 Percentage Match")
 
-input_prompt1 = """
-You are an experienced Technical Human Resource Manager. 
-Review the resume against the job description. Highlight strengths and weaknesses in relation to the role.
-"""
-
-input_prompt2 = """
-You are a skilled ATS (Applicant Tracking System) scanner. 
-Evaluate the resume against the job description. Provide percentage match first, then missing keywords, then final thoughts.
-"""
-
-# Responses
+# ------------------ Button Actions ------------------ #
 if submit1:
     if uploaded_files:
         for uploaded_file in uploaded_files:
             pdf_content = input_pdf_setup(uploaded_file)
             response = get_gemini_response(input_text, pdf_content, input_prompt1)
-            st.subheader(f"Response for {uploaded_file.name}")
+            st.subheader(f"Resume: {uploaded_file.name}")
             st.write(response)
     else:
-        st.warning("Please upload the resume(s).")
+        st.warning("Please upload at least one resume.")
 
-if submit2:
+elif submit3:
     if uploaded_files:
         for uploaded_file in uploaded_files:
             pdf_content = input_pdf_setup(uploaded_file)
-            response = get_gemini_response(input_text, pdf_content, input_prompt2)
-            st.subheader(f"Percentage Match for {uploaded_file.name}")
+            response = get_gemini_response(input_text, pdf_content, input_prompt3)
+            st.subheader(f"Resume: {uploaded_file.name}")
             st.write(response)
     else:
-        st.warning("Please upload the resume(s).")
-
-st.markdown('</div>', unsafe_allow_html=True)
+        st.warning("Please upload at least one resume.")
