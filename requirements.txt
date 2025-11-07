@@ -1,0 +1,7 @@
+# Add your requirements here
+streamlit
+mysql-connector-python
+matplotlib
+plotly
+pdf2image
+google-generativeai
