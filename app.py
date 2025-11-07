@@ -85,23 +85,23 @@ Evaluate the resume against the job description. Provide percentage match first,
 
 # Responses
 if submit1:
-    if uploaded_files and input_text:
+    if uploaded_files:
         for uploaded_file in uploaded_files:
             pdf_content = input_pdf_setup(uploaded_file)
             response = get_gemini_response(input_text, pdf_content, input_prompt1)
             st.subheader(f"Response for {uploaded_file.name}")
             st.write(response)
     else:
-        st.warning("Please upload the resume(s) and provide a job description.")
+        st.warning("Please upload the resume(s).")
 
 if submit2:
-    if uploaded_files and input_text:
+    if uploaded_files:
         for uploaded_file in uploaded_files:
             pdf_content = input_pdf_setup(uploaded_file)
             response = get_gemini_response(input_text, pdf_content, input_prompt2)
             st.subheader(f"Percentage Match for {uploaded_file.name}")
             st.write(response)
     else:
-        st.warning("Please upload the resume(s) and provide a job description.")
+        st.warning("Please upload the resume(s).")
 
 st.markdown('</div>', unsafe_allow_html=True)
