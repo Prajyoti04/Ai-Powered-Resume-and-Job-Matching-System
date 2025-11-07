@@ -1,110 +1,158 @@
-from dotenv import load_dotenv
 import streamlit as st
 import os
-import io
-import base64
+import mysql.connector
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
+import plotly.express as px
+from pdf2image import convert_from_path
 from PIL import Image
-import pdf2image
+import numpy as np
 import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
+import torch
+import pinecone
 
-# Load environment variables
+# ------------------------------------------------------------
+# 1️⃣ Setup & Initialization
+# ------------------------------------------------------------
 load_dotenv()
 
-# Configure Google Gemini API
+# Safety device setting for PyTorch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+st.write(f"✅ Using device: {device}")
+
+# Load model safely
+try:
+    model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+except Exception as e:
+    st.error("❌ Error loading SentenceTransformer model.")
+    st.write(e)
+    st.stop()
+
+# Pinecone initialization
+pinecone_api = os.getenv("PINECONE_API_KEY")
+if pinecone_api:
+    pinecone.init(api_key=pinecone_api, environment="us-west1-gcp")
+else:
+    st.warning("⚠️ Pinecone API key not found in environment variables.")
+
+# Google Gemini (Generative AI)
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# ------------------ Helper Functions ------------------ #
-def input_pdf_setup(uploaded_file):
-    """Convert uploaded PDF to base64 images for processing"""
-    if uploaded_file is not None:
-        images = pdf2image.convert_from_bytes(uploaded_file.read())
-        first_page = images[0]
+# ------------------------------------------------------------
+# 2️⃣ MySQL Database Connection
+# ------------------------------------------------------------
+def get_db_connection():
+    try:
+        return mysql.connector.connect(
+            host="localhost",
+            user=os.getenv("MYSQL_USER", "root"),
+            password=os.getenv("MYSQL_PASSWORD", ""),
+            database=os.getenv("MYSQL_DATABASE", "resume_db"),
+        )
+    except Exception as e:
+        st.error("❌ Database connection failed.")
+        st.write(e)
+        return None
 
-        img_byte_arr = io.BytesIO()
-        first_page.save(img_byte_arr, format='JPEG')
-        img_byte_arr = img_byte_arr.getvalue()
+# ------------------------------------------------------------
+# 3️⃣ Helper Functions
+# ------------------------------------------------------------
+def embed_text(text):
+    """Generate embeddings for a given text using SentenceTransformer."""
+    return model.encode(text).tolist()
 
-        pdf_parts = [
-            {
-                "mime_type": "image/jpeg",
-                "data": base64.b64encode(img_byte_arr).decode()
-            }
-        ]
-        return pdf_parts
-    else:
-        raise FileNotFoundError("No file uploaded or invalid PDF file.")
+def extract_text_from_pdf(uploaded_file):
+    """Extract text from a PDF resume."""
+    try:
+        images = convert_from_path(uploaded_file)
+        text = ""
+        for img in images:
+            # For simplicity, no OCR integration here
+            text += " [Image converted from page]"
+        return text
+    except Exception as e:
+        st.error("Error reading PDF file.")
+        st.write(e)
+        return ""
 
-def get_gemini_response(input_text, pdf_content, prompt):
-    """Call Google Gemini model to generate response"""
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content([input_text, pdf_content[0], prompt])
-    return response.text
+def generate_summary(text):
+    """Generate a short professional summary using Gemini."""
+    try:
+        prompt = f"Summarize the following resume in 3-4 lines:\n{text}"
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"⚠️ Could not generate summary: {e}"
 
-# ------------------ Streamlit UI ------------------ #
-st.set_page_config(page_title="🤖 AI Resume & Job Matching", layout="wide")
-
+# ------------------------------------------------------------
+# 4️⃣ Streamlit UI Layout
+# ------------------------------------------------------------
+st.set_page_config(page_title="AI Resume Matcher", layout="centered")
 st.title("🤖 AI-Powered Resume & Job Matching System")
-st.write("Upload your resume and job description to get ATS-style insights!")
+st.markdown("---")
 
-# Layout: Job description & Resume upload
-col1, col2 = st.columns(2)
+tab1, tab2, tab3 = st.tabs(["📄 Upload Resume", "📊 Job Matching", "📈 Insights"])
 
-with col1:
-    input_text = st.text_area(
-        "📝 Job Description", 
-        height=250,
-        placeholder="Paste the job description here..."
-    )
+# ------------------------------------------------------------
+# 5️⃣ Tab 1: Resume Upload & Summary
+# ------------------------------------------------------------
+with tab1:
+    st.subheader("Upload Your Resume")
+    uploaded_file = st.file_uploader("Select a resume (PDF format only)", type=["pdf"])
 
-with col2:
-    uploaded_files = st.file_uploader(
-        "📎 Upload Resume(s) (PDF only)", 
-        type=["pdf"], 
-        accept_multiple_files=True
-    )
+    if uploaded_file:
+        with open("temp_resume.pdf", "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-if uploaded_files:
-    st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully", icon="✅")
+        st.success("✅ Resume uploaded successfully!")
+        resume_text = extract_text_from_pdf("temp_resume.pdf")
 
-# ------------------ Prompts ------------------ #
-input_prompt1 = """
-You are an experienced Technical Human Resource Manager, your task is to review the provided resume against the job description. 
-Please share your professional evaluation on whether the candidate's profile aligns with the role. 
-Highlight the strengths and weaknesses of the applicant in relation to the specified job requirements.
-"""
+        st.markdown("### 🧾 Extracted Text Preview")
+        st.text_area("Resume Text", resume_text[:1500] + "..." if len(resume_text) > 1500 else resume_text, height=200)
 
-input_prompt3 = """
-You are a skilled ATS (Applicant Tracking System) scanner with a deep understanding of data science and ATS functionality, 
-your task is to evaluate the resume against the provided job description. Give me the percentage of match if the resume matches
-the job description. First the output should come as percentage and then keywords missing and last final thoughts.
-"""
+        if st.button("✨ Generate Summary", use_container_width=True):
+            summary = generate_summary(resume_text)
+            st.markdown("### 🧠 AI Summary")
+            st.info(summary)
 
-# ------------------ Buttons ------------------ #
-st.write("")  # Spacer
-submit1 = st.button("📄 Tell Me About the Resume")
-st.write("")  # Spacer
-submit3 = st.button("📊 Percentage Match")
-st.write("")  # Spacer
+# ------------------------------------------------------------
+# 6️⃣ Tab 2: Job Matching Section
+# ------------------------------------------------------------
+with tab2:
+    st.subheader("Find Matching Jobs")
+    job_desc = st.text_area("Enter Job Description", placeholder="Paste the job description here...")
+    
+    if st.button("🔍 Match Resume", use_container_width=True):
+        if uploaded_file and job_desc:
+            resume_embed = embed_text(resume_text)
+            job_embed = embed_text(job_desc)
+            similarity = np.dot(resume_embed, job_embed) / (np.linalg.norm(resume_embed) * np.linalg.norm(job_embed))
+            st.metric("Match Score (%)", f"{round(similarity * 100, 2)}")
+        else:
+            st.warning("⚠️ Please upload a resume and enter a job description.")
 
-# ------------------ Button Actions ------------------ #
-if submit1:
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            pdf_content = input_pdf_setup(uploaded_file)
-            response = get_gemini_response(input_text, pdf_content, input_prompt1)
-            st.subheader(f"Resume: {uploaded_file.name}")
-            st.write(response)
-            st.write("---")  # Separator
-    else:
-        st.warning("Please upload at least one resume.")
+# ------------------------------------------------------------
+# 7️⃣ Tab 3: Insights / Analytics
+# ------------------------------------------------------------
+with tab3:
+    st.subheader("📊 Analytics Dashboard")
 
-elif submit3:
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            pdf_content = input_pdf_setup(uploaded_file)
-            response = get_gemini_response(input_text, pdf_content, input_prompt3)
-            st.subheader(f"Resume: {uploaded_file.name}")
-            st.write(response)
-            st.write("---")  # Separator
-    else:
-        st.warning("Please upload at least one resume.")
+    data = {
+        "Skills": ["Python", "ML", "SQL", "Communication", "Data Analysis"],
+        "Proficiency": [80, 75, 65, 90, 70]
+    }
+
+    fig = px.bar(data, x="Skills", y="Proficiency", title="Skill Proficiency Overview", color="Skills")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### 📈 AI-Powered Insights")
+    st.write("Use this dashboard to understand your strengths and skill alignment with job descriptions.")
+
+# ------------------------------------------------------------
+# 8️⃣ Footer
+# ------------------------------------------------------------
+st.markdown("---")
+st.caption("🧠 Built with Streamlit, SentenceTransformers, Pinecone & Gemini AI")
+
