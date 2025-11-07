@@ -1,25 +1,22 @@
-# app.py
-
-from dotenv import load_dotenv
-import os
-import io
-import base64
 import streamlit as st
+import base64
+import io
 from PIL import Image
 import pdf2image
 import google.generativeai as genai
+import os
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
 import pinecone
 import numpy as np
-from sentence_transformers import SentenceTransformer
-import mysql.connector
 
 # Load environment variables
 load_dotenv()
 
-# Configure Gemini AI
+# Configure Google Gemini
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Initialize Sentence Transformer for vector embeddings
+# Initialize sentence transformer model
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Initialize Pinecone
@@ -29,117 +26,132 @@ if index_name not in pinecone.list_indexes():
     pinecone.create_index(index_name, dimension=384)
 index = pinecone.Index(index_name)
 
-# MySQL connection setup (optional, remove if not needed)
-def create_db_connection():
-    try:
-        conn = mysql.connector.connect(
-            host=os.getenv("MYSQLHOST", "localhost"),
-            user=os.getenv("MYSQLUSER", "root"),
-            password=os.getenv("MYSQLPASSWORD", ""),
-            database=os.getenv("MYSQLDATABASE", "codewthme")
-        )
-        print("MySQL Connection successfully created!")
-        return conn
-    except mysql.connector.Error as err:
-        print(f"MySQL Error: {err}")
-        return None
+# ----------------------- Helper Functions -----------------------
 
-db_connection = create_db_connection()
+def get_gemini_response(input, pdf_content, prompt):
+    """Send resume and job description to AI model"""
+    g_model = genai.GenerativeModel('gemini-1.5-flash')
+    response = g_model.generate_content([input, pdf_content[0], prompt])
+    return response.text
 
-# Function to convert uploaded PDF to images
 def input_pdf_setup(uploaded_file):
+    """Convert uploaded PDF to base64-encoded image"""
     if uploaded_file is not None:
         images = pdf2image.convert_from_bytes(uploaded_file.read())
         first_page = images[0]
         img_byte_arr = io.BytesIO()
         first_page.save(img_byte_arr, format='JPEG')
         img_byte_arr = img_byte_arr.getvalue()
-        pdf_parts = [{"mime_type": "image/jpeg", "data": base64.b64encode(img_byte_arr).decode()}]
+        pdf_parts = [{
+            "mime_type": "image/jpeg",
+            "data": base64.b64encode(img_byte_arr).decode()
+        }]
         return pdf_parts
     else:
         raise FileNotFoundError("No file uploaded or invalid PDF file.")
 
-# Function to process and store resumes in Pinecone
 def process_and_store_resumes(uploaded_files):
+    """Store PDF embeddings in Pinecone"""
     for uploaded_file in uploaded_files:
         pdf_content = input_pdf_setup(uploaded_file)
         text = " ".join([part['data'] for part in pdf_content])
         vector = model.encode(text)
         index.upsert([(uploaded_file.name, vector.tolist())])
 
-# Gemini AI response function
-def get_gemini_response(input_text, pdf_content, prompt):
-    model_ai = genai.GenerativeModel('gemini-1.5-flash')
-    response = model_ai.generate_content([input_text, pdf_content[0], prompt])
-    return response.text
+# ----------------------- Streamlit UI -----------------------
 
-# Streamlit UI configuration
-st.set_page_config(page_title="ATS Resume Expert", layout="wide")
+st.set_page_config(page_title="🤖 ATS Resume Analyzer", layout="wide")
+
+# Custom CSS for purple-pink theme
 st.markdown("""
 <style>
 body {
-    background: linear-gradient(135deg, #9b59b6, #e91e63);
-    color: white;
+    background: linear-gradient(to right, #9b59b6, #ff79c6);
     font-family: 'Arial', sans-serif;
+    color: #fff;
 }
 .stButton>button {
-    background-color: #8e44ad;
+    background: #ff79c6;
     color: white;
     font-weight: bold;
+    border-radius: 10px;
+    padding: 0.5em 1.2em;
 }
-.stButton>button:hover {
-    background-color: #e91e63;
-    color: white;
+.stFileUploader>div {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 1em;
+    margin-bottom: 1em;
+}
+.stTextArea>div>div>textarea {
+    border-radius: 10px;
+    padding: 0.5em;
+}
+h1, h2, h3, h4 {
+    color: #fff;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌸 ATS Resume Expert 🌸")
-st.header("ATS Tracking System")
+# Header
+st.markdown("<h1 style='text-align:center;'>🤖 AI-Powered Resume & Job Matching System</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;'>Upload your resume(s) and job description to get an ATS-style evaluation and percentage match!</p>", unsafe_allow_html=True)
 
-# Layout: two columns
+# Input columns
 col1, col2 = st.columns(2)
-with col1:
-    input_text = st.text_area("Job Description:", key="input")
-with col2:
-    uploaded_files = st.file_uploader(
-        "Upload your resumes (PDF)...", type=["pdf"], accept_multiple_files=True
-    )
 
+with col1:
+    st.markdown("### 📝 Job Description")
+    input_text = st.text_area("", placeholder="Paste your job description here...", height=250)
+
+with col2:
+    st.markdown("### 📎 Upload Resume(s) (PDF only)")
+    uploaded_files = st.file_uploader("", type=["pdf"], accept_multiple_files=True)
+
+# Show uploaded files
 if uploaded_files:
-    st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully")
-    with st.spinner("Processing resumes..."):
-        process_and_store_resumes(uploaded_files)
+    for uploaded_file in uploaded_files:
+        st.markdown(f"<div style='background-color: rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 10px; margin-bottom:10px;'>✅ {uploaded_file.name} uploaded successfully!</div>", unsafe_allow_html=True)
 
 # Buttons
-submit1 = st.button("Tell Me About the Resume")
-submit3 = st.button("Percentage Match")
+st.markdown("<br>", unsafe_allow_html=True)
+col3, col4 = st.columns(2)
+with col3:
+    submit1 = st.button("Tell Me About the Resume")
+with col4:
+    submit3 = st.button("Percentage Match")
 
-# Input prompts
+# Prompts
 input_prompt1 = """
-You are an experienced Technical Human Resource Manager. Review the resume against the job description.
-Provide professional evaluation: strengths, weaknesses, and fit for the role.
-"""
-input_prompt3 = """
-You are a skilled ATS scanner. Evaluate the resume against the job description.
-Provide percentage match, missing keywords, and final thoughts.
+You are an experienced Technical Human Resource Manager, your task is to review the provided resume against the job description. 
+Please share your professional evaluation on whether the candidate's profile aligns with the role. 
+Highlight the strengths and weaknesses of the applicant in relation to the specified job requirements.
 """
 
-# Button actions
+input_prompt3 = """
+You are a skilled ATS (Applicant Tracking System) scanner with a deep understanding of data science and ATS functionality, 
+your task is to evaluate the resume against the provided job description. Give me the percentage of match if the resume matches
+the job description. First the output should come as percentage and then keywords missing and last final thoughts.
+"""
+
+# ----------------------- Button Actions -----------------------
+
 if submit1:
     if uploaded_files:
-        pdf_content = input_pdf_setup(uploaded_files[0])
-        response = get_gemini_response(input_text, pdf_content, input_prompt1)
-        st.subheader("Resume Analysis:")
-        st.write(response)
+        for uploaded_file in uploaded_files:
+            pdf_content = input_pdf_setup(uploaded_file)
+            response = get_gemini_response(input_text, pdf_content, input_prompt1)
+            st.subheader(f"Response for {uploaded_file.name}")
+            st.write(response)
     else:
-        st.warning("Please upload a resume first.")
+        st.warning("Please upload at least one resume.")
 
 elif submit3:
     if uploaded_files:
-        pdf_content = input_pdf_setup(uploaded_files[0])
-        response = get_gemini_response(input_text, pdf_content, input_prompt3)
-        st.subheader("Resume Match Percentage:")
-        st.write(response)
+        for uploaded_file in uploaded_files:
+            pdf_content = input_pdf_setup(uploaded_file)
+            response = get_gemini_response(input_text, pdf_content, input_prompt3)
+            st.subheader(f"Response for {uploaded_file.name}")
+            st.write(response)
     else:
-        st.warning("Please upload a resume first.")
+        st.warning("Please upload at least one resume.")
