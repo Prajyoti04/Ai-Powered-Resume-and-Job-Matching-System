@@ -1,140 +1,145 @@
-import streamlit as st
-from sentence_transformers import SentenceTransformer
-import torch
-import os
+# app.py
+
 from dotenv import load_dotenv
-import pdfplumber
+import os
+import io
+import base64
+import streamlit as st
+from PIL import Image
+import pdf2image
+import google.generativeai as genai
+import pinecone
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import mysql.connector
 
-# ---------------------------------------------------------------------
-# 🎯 Environment Setup
-# ---------------------------------------------------------------------
+# Load environment variables
 load_dotenv()
-st.set_page_config(page_title="🤖 AI-Powered Resume & Job Match", layout="wide")
 
-# ---------------------------------------------------------------------
-# 🎯 Safe Model Loading (Fix for Torch 3.13 / Streamlit Cloud)
-# ---------------------------------------------------------------------
-try:
-    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-except NotImplementedError:
-    import logging
-    logging.warning("⚠️ Torch device conversion not supported. Loading model on CPU manually.")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-except Exception as e:
-    st.error("❌ Error loading SentenceTransformer model.")
-    st.write(e)
-    st.stop()
+# Configure Gemini AI
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# ---------------------------------------------------------------------
-# 📄 Helper: Extract Text from Uploaded PDFs
-# ---------------------------------------------------------------------
-def extract_text_from_pdf(uploaded_file):
-    text = ""
+# Initialize Sentence Transformer for vector embeddings
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Initialize Pinecone
+pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-west1-gcp")
+index_name = "resume-index"
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(index_name, dimension=384)
+index = pinecone.Index(index_name)
+
+# MySQL connection setup (optional, remove if not needed)
+def create_db_connection():
     try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-    except Exception:
-        st.error("⚠️ Could not extract text from this PDF.")
-    return text
+        conn = mysql.connector.connect(
+            host=os.getenv("MYSQLHOST", "localhost"),
+            user=os.getenv("MYSQLUSER", "root"),
+            password=os.getenv("MYSQLPASSWORD", ""),
+            database=os.getenv("MYSQLDATABASE", "codewthme")
+        )
+        print("MySQL Connection successfully created!")
+        return conn
+    except mysql.connector.Error as err:
+        print(f"MySQL Error: {err}")
+        return None
 
-# ---------------------------------------------------------------------
-# 🧠 Helper: Compute Similarity Between Resume and Job Description
-# ---------------------------------------------------------------------
-def calculate_similarity(resume_text, job_text):
-    if not resume_text.strip() or not job_text.strip():
-        return 0.0
-    try:
-        resume_emb = model.encode(resume_text, convert_to_tensor=True)
-        job_emb = model.encode(job_text, convert_to_tensor=True)
-        score = torch.nn.functional.cosine_similarity(resume_emb, job_emb, dim=0)
-        return float(score.item())
-    except Exception as e:
-        st.error("⚠️ Error calculating similarity:")
-        st.write(e)
-        return 0.0
+db_connection = create_db_connection()
 
-# ---------------------------------------------------------------------
-# 🎨 Streamlit UI
-# ---------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-        .main-title {
-            font-size: 2.2em;
-            color: #9C27B0;
-            text-align: center;
-            font-weight: 700;
-            margin-bottom: 1em;
-        }
-        .section-header {
-            color: #E91E63;
-            font-weight: 600;
-            margin-top: 1.5em;
-            margin-bottom: 0.5em;
-            font-size: 1.2em;
-        }
-        .stButton>button {
-            background-color: #9C27B0;
-            color: white;
-            font-weight: 600;
-            border-radius: 10px;
-            padding: 0.5em 1em;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown('<div class="main-title">🤖 AI-Powered Resume & Job Matching System</div>', unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------
-# 📝 Job Description Input
-# ---------------------------------------------------------------------
-st.markdown('<div class="section-header">📝 Enter Job Description:</div>', unsafe_allow_html=True)
-job_description = st.text_area("Paste the job description here", height=180)
-
-# ---------------------------------------------------------------------
-# 📎 Upload Resume(s)
-# ---------------------------------------------------------------------
-st.markdown('<div class="section-header">📎 Upload Resume (PDF only)</div>', unsafe_allow_html=True)
-uploaded_resumes = st.file_uploader(
-    "Upload one or more resumes (PDF)",
-    type=["pdf"],
-    accept_multiple_files=True
-)
-
-# ---------------------------------------------------------------------
-# 🚀 Matching Logic
-# ---------------------------------------------------------------------
-if st.button("🔍 Match Resume(s)"):
-    if not job_description.strip():
-        st.warning("⚠️ Please enter a job description first.")
-    elif not uploaded_resumes:
-        st.warning("⚠️ Please upload at least one resume.")
+# Function to convert uploaded PDF to images
+def input_pdf_setup(uploaded_file):
+    if uploaded_file is not None:
+        images = pdf2image.convert_from_bytes(uploaded_file.read())
+        first_page = images[0]
+        img_byte_arr = io.BytesIO()
+        first_page.save(img_byte_arr, format='JPEG')
+        img_byte_arr = img_byte_arr.getvalue()
+        pdf_parts = [{"mime_type": "image/jpeg", "data": base64.b64encode(img_byte_arr).decode()}]
+        return pdf_parts
     else:
-        st.info("⏳ Analyzing... please wait.")
-        results = []
+        raise FileNotFoundError("No file uploaded or invalid PDF file.")
 
-        for resume_file in uploaded_resumes:
-            resume_text = extract_text_from_pdf(resume_file)
-            score = calculate_similarity(resume_text, job_description)
-            results.append((resume_file.name, round(score * 100, 2)))
+# Function to process and store resumes in Pinecone
+def process_and_store_resumes(uploaded_files):
+    for uploaded_file in uploaded_files:
+        pdf_content = input_pdf_setup(uploaded_file)
+        text = " ".join([part['data'] for part in pdf_content])
+        vector = model.encode(text)
+        index.upsert([(uploaded_file.name, vector.tolist())])
 
-        st.success("✅ Analysis Complete!")
+# Gemini AI response function
+def get_gemini_response(input_text, pdf_content, prompt):
+    model_ai = genai.GenerativeModel('gemini-1.5-flash')
+    response = model_ai.generate_content([input_text, pdf_content[0], prompt])
+    return response.text
 
-        # Display results
-        for name, match in results:
-            st.markdown(f"**📄 {name}** — Match Score: **{match}%**")
-            st.progress(int(match))
+# Streamlit UI configuration
+st.set_page_config(page_title="ATS Resume Expert", layout="wide")
+st.markdown("""
+<style>
+body {
+    background: linear-gradient(135deg, #9b59b6, #e91e63);
+    color: white;
+    font-family: 'Arial', sans-serif;
+}
+.stButton>button {
+    background-color: #8e44ad;
+    color: white;
+    font-weight: bold;
+}
+.stButton>button:hover {
+    background-color: #e91e63;
+    color: white;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------
-# 📢 Footer
-# ---------------------------------------------------------------------
-st.markdown("---")
-st.markdown(
-    "<p style='text-align:center; color:gray;'>Built with 💜 using Streamlit & SentenceTransformers</p>",
-    unsafe_allow_html=True
-)
+st.title("🌸 ATS Resume Expert 🌸")
+st.header("ATS Tracking System")
+
+# Layout: two columns
+col1, col2 = st.columns(2)
+with col1:
+    input_text = st.text_area("Job Description:", key="input")
+with col2:
+    uploaded_files = st.file_uploader(
+        "Upload your resumes (PDF)...", type=["pdf"], accept_multiple_files=True
+    )
+
+if uploaded_files:
+    st.success(f"{len(uploaded_files)} PDF(s) Uploaded Successfully")
+    with st.spinner("Processing resumes..."):
+        process_and_store_resumes(uploaded_files)
+
+# Buttons
+submit1 = st.button("Tell Me About the Resume")
+submit3 = st.button("Percentage Match")
+
+# Input prompts
+input_prompt1 = """
+You are an experienced Technical Human Resource Manager. Review the resume against the job description.
+Provide professional evaluation: strengths, weaknesses, and fit for the role.
+"""
+input_prompt3 = """
+You are a skilled ATS scanner. Evaluate the resume against the job description.
+Provide percentage match, missing keywords, and final thoughts.
+"""
+
+# Button actions
+if submit1:
+    if uploaded_files:
+        pdf_content = input_pdf_setup(uploaded_files[0])
+        response = get_gemini_response(input_text, pdf_content, input_prompt1)
+        st.subheader("Resume Analysis:")
+        st.write(response)
+    else:
+        st.warning("Please upload a resume first.")
+
+elif submit3:
+    if uploaded_files:
+        pdf_content = input_pdf_setup(uploaded_files[0])
+        response = get_gemini_response(input_text, pdf_content, input_prompt3)
+        st.subheader("Resume Match Percentage:")
+        st.write(response)
+    else:
+        st.warning("Please upload a resume first.")
