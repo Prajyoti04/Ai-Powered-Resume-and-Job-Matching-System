@@ -1,5 +1,6 @@
-python==3.10
-torch==2.2.2
-sentence-transformers==2.6.1
-streamlit==1.36.0
-transformers==4.40.0
+streamlit
+pdf2image
+google-generativeai
+python-dotenv
+pillow
+plotly
