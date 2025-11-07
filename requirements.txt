@@ -1,9 +1,6 @@
 streamlit
-mysql-connector-python
-python-dotenv==1.0.1
-pandas
-numpy
-matplotlib
-plotly
 pdf2image
 google-generativeai
+python-dotenv
+pillow
+plotly
