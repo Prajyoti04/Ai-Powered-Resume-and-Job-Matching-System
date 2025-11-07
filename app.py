@@ -7,8 +7,6 @@ import streamlit as st
 from PIL import Image
 import pdf2image
 import google.generativeai as genai
-from sentence_transformers import SentenceTransformer
-import numpy as np
 
 # Load environment variables
 load_dotenv()
@@ -16,13 +14,10 @@ load_dotenv()
 # Configure Google Gemini API
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Force CPU to avoid Streamlit GPU errors
-model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
-
 # Streamlit page config
 st.set_page_config(page_title="🤖 AI-Powered Resume & Job Matching System", layout="wide")
 
-# Custom CSS for purple-pink theme
+# Purple-pink theme
 st.markdown("""
     <style>
     .main {
