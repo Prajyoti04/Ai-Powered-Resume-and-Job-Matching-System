@@ -8,7 +8,5 @@ google-generativeai
 sentence-transformers
 pinecone
 torch
-pinecone-client
 Pillow
 numpy
-
