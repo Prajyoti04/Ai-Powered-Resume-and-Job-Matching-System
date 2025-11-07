@@ -1,6 +1,9 @@
 streamlit
+mysql-connector-python
+matplotlib
+plotly
 pdf2image
 google-generativeai
 python-dotenv
-pillow
-plotly
+pinecone-client
+sentence-transformers
