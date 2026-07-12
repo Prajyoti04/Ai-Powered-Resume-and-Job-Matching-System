@@ -1,6 +1,9 @@
 streamlit
-pdf2image
-google-generativeai
 python-dotenv
-pillow
+google-generativeai
+PyPDF2
+sentence-transformers
+pinecone
+mysql-connector-python
 plotly
+numpy
